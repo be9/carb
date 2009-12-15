@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+require 'rubygems'
+require 'thor'
+require 'pathname'
+#require 'readline'
+
+class CA < Thor
+  include Thor::Actions
+
+  class_option :openssl, :desc => 'OpenSSL executable', :default => 'openssl'
+
+  desc 'newca', 'Create a new CA'
+  method_option :caroot, :default => '.', :desc => 'The top of CA hierarchy'
+  method_option :force, :default => false, :desc => 'Recreate hierarchy even if it exists', :type => :boolean
+  method_option :cakey, :default => 'cakey.pem', :desc => 'CA private key name'
+  method_option :cacert, :type => :string, :desc => 'CA certificate filename (will be created if not specified)'
+
+  def newca
+    root = Pathname.new(options[:caroot])
+
+    if options[:force] || !File.exists?(root + "serial")
+      # create the directory hierarchy
+
+      empty_directory root
+      %w(certs crl newcerts private).each do |subdir|
+        empty_directory root+subdir
+      end
+
+      create_file root + 'index.txt'
+      create_file root + 'crlnumber', "01\n"
+    end
+
+    unless File.exists?(root + 'private' + options[:cakey])
+      if options[:cacert]
+        raise NotImplementedError, "CA certificate copying not supported so far"
+      else
+        say_status :generate, "Making CA certificate ..."
+      end
+    end
+  end
+end
+
+CA.start
