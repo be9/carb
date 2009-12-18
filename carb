@@ -8,21 +8,22 @@ class CA < Thor
   include Thor::Actions
 
   class_option :openssl, :desc => 'OpenSSL executable', :default => 'openssl'
+  class_option :config, :desc => 'OpenSSL config', :type => :string
+  class_option :root,  :default => '.', :desc => 'The top of CA hierarchy'
 
   desc 'newca', 'Create a new CA'
-  method_option :caroot, :default => '.', :desc => 'The top of CA hierarchy'
   method_option :force, :default => false, :desc => 'Recreate hierarchy even if it exists', :type => :boolean
-  method_option :cakey, :default => 'cakey.pem', :desc => 'CA private key name'
-  method_option :cacert, :type => :string, :desc => 'CA certificate filename (will be created if not specified)'
+  method_option :key,   :default => 'cakey.pem', :desc => 'CA private key name'
+  method_option :req,   :default => 'careq.pem', :desc => 'CA private key request'
+  method_option :cert,  :type => :string, :desc => 'CA certificate filename (will be created if not specified)'
+  method_option :days,  :default => 1095, :type => :numeric, :desc => 'The number of days to certify CA certificate for'
 
   def newca
-    root = Pathname.new(options[:caroot])
-
     if options[:force] || !File.exists?(root + "serial")
       # create the directory hierarchy
 
       empty_directory root
-      %w(certs crl newcerts private).each do |subdir|
+      %w(certs crl newcerts private intrinsic).each do |subdir|
         empty_directory root+subdir
       end
 
@@ -30,13 +31,78 @@ class CA < Thor
       create_file root + 'crlnumber', "01\n"
     end
 
-    unless File.exists?(root + 'private' + options[:cakey])
-      if options[:cacert]
+    unless File.exists?(root + 'private' + options[:key])
+      if options[:cert]
         raise NotImplementedError, "CA certificate copying not supported so far"
       else
         say_status :generate, "Making CA certificate ..."
+
+        key = root + 'private' + options[:key]
+        req = root + options[:req]
+
+        openssl :req, "-new -keyout #{key} -out #{req}"
+        openssl :ca, "-create_serial -out #{root + 'cacert.pem'} -days #{options[:days]} -batch -keyfile #{key} -selfsign -extensions v3_ca -infiles #{req}"
       end
     end
+  end
+
+  desc 'newreq', 'Create a new certificate request'
+  method_option :days,  :default => 365, :type => :numeric, 
+                :desc => 'The number of days to certify requested certificate for'
+  def newreq
+    openssl :req, "-new -keyout newkey.pem -out newreq.pem -days #{options[:days]}"
+
+    say_status :done, "Request is in newreq.pem, private key is in newkey.pem"
+  end
+
+  desc 'sign', 'Sign the generated certificate request'
+  def sign
+    openssl :ca, "-policy policy_anything -out newcert.pem -infiles newreq.pem"
+
+    say_status :done, "Signed certificate is in newcert.pem"
+  end
+
+  desc 'intrinsic NAME', 'Create a request and sign it, storing the results under intrinsic/NAME'
+  method_option :days,  :default => 365, :type => :numeric, 
+                :desc => 'The number of days to certify requested certificate for'
+  method_option :passphrase, :type => :boolean, :default => false, 
+                :desc => 'Reset passphrase in the private key if set to false'
+
+  def intrinsic(name)
+    dir = root + "intrinsic" + name
+    empty_directory dir
+
+    req  = dir + "request.pem"
+    key  = dir + "private.pem"
+    cert = dir + "cert.pem"
+
+    say_status :generate, "Private key and certificate request"
+    openssl :req, "-new -keyout #{key} -out #{req} -days #{options[:days]}"
+
+    say_status :sign, "Certificate request"
+    openssl :ca, "-policy policy_anything -out #{cert} -infiles #{req}"
+
+    if !options[:passphrase]
+      say_status :reset, "Passphrase"
+
+      openssl :rsa, "-in #{key} -out #{key}"
+    end
+
+    say_status :done, "Find key, request and signed certificate in #{dir}"
+  end
+
+  protected
+
+  def openssl(cmd, args)
+    if options[:config] && cmd.to_s != 'rsa'
+      args = "-config #{options[:config]} #{args}"
+    end
+
+    run "#{options[:openssl]} #{cmd} #{args}"
+  end
+
+  def root
+    @root ||= Pathname.new(options[:root])
   end
 end
 
