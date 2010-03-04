@@ -8,8 +8,8 @@ class CA < Thor
   include Thor::Actions
 
   class_option :openssl, :desc => 'OpenSSL executable', :default => 'openssl'
-  class_option :config, :desc => 'OpenSSL config', :type => :string
-  class_option :root,  :default => '.', :desc => 'The top of CA hierarchy'
+  class_option :config, :desc => 'OpenSSL config', :type => :string, :default => 'openssl.cnf'
+  class_option :root,  :default => 'caroot', :desc => 'The top of CA hierarchy'
 
   desc 'newca', 'Create a new CA'
   method_option :force, :default => false, :desc => 'Recreate hierarchy even if it exists', :type => :boolean
@@ -56,8 +56,10 @@ class CA < Thor
   end
 
   desc 'sign', 'Sign the generated certificate request'
+  method_option :days,  :default => 365, :type => :numeric, 
+                :desc => 'The number of days to certify requested certificate for'
   def sign
-    openssl :ca, "-policy policy_anything -out newcert.pem -infiles newreq.pem"
+    openssl :ca, "-days #{options[:days]} -policy policy_anything -out newcert.pem -infiles newreq.pem"
 
     say_status :done, "Signed certificate is in newcert.pem"
   end
@@ -79,8 +81,18 @@ class CA < Thor
     say_status :generate, "Private key and certificate request"
     openssl :req, "-new -keyout #{key} -out #{req} -days #{options[:days]}"
 
+    if $? != 0
+      say_status :error, "Aborting"
+      return
+    end
+
     say_status :sign, "Certificate request"
-    openssl :ca, "-policy policy_anything -out #{cert} -infiles #{req}"
+    openssl :ca, "-days #{options[:days]} -policy policy_anything -out #{cert} -infiles #{req}"
+
+    if $? != 0
+      say_status :error, "Aborting"
+      return
+    end
 
     if !options[:passphrase]
       say_status :reset, "Passphrase"
